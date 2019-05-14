@@ -13,7 +13,7 @@ def ilda_transfer(port, file):
 
     print('Encoded lenght: {}\n'.format(len(cobs_ilda_data)))
     
-    s = serial.Serial(port, 9600, timeout=5) # Timeout 1 second for reads
+    s = serial.Serial(port, 115200, timeout=5) # Timeout 1 second for reads
 
     s.write(cobs.encode(bytearray('RTS')) + b'\x00') # write request to send to STM
     

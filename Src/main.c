@@ -24,7 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "cobs.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,7 +39,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define READ_TIMEOUT 1000
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -47,9 +47,9 @@ SPI_HandleTypeDef hspi2;
 
 UART_HandleTypeDef huart2;
 
-HCD_HandleTypeDef hhcd_USB_OTG_FS;
-
-osThreadId defaultTaskHandle;
+osThreadId ildaTransferTasHandle;
+osThreadId ildaDeviceDriveHandle;
+osMutexId AnimationBufferMutexHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -59,8 +59,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI2_Init(void);
-static void MX_USB_OTG_FS_HCD_Init(void);
-void StartDefaultTask(void const * argument);
+void ILDATransferTask(void const * argument);
+void ILDADeviceDriver(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -101,10 +101,14 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI2_Init();
-  MX_USB_OTG_FS_HCD_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
+
+  /* Create the mutex(es) */
+  /* definition and creation of AnimationBufferMutex */
+  osMutexDef(AnimationBufferMutex);
+  AnimationBufferMutexHandle = osMutexCreate(osMutex(AnimationBufferMutex));
 
   /* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -123,9 +127,13 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+  /* definition and creation of ildaTransferTas */
+  osThreadDef(ildaTransferTas, ILDATransferTask, osPriorityNormal, 0, 128);
+  ildaTransferTasHandle = osThreadCreate(osThread(ildaTransferTas), NULL);
+
+  /* definition and creation of ildaDeviceDrive */
+  osThreadDef(ildaDeviceDrive, ILDADeviceDriver, osPriorityIdle, 0, 128);
+  ildaDeviceDriveHandle = osThreadCreate(osThread(ildaDeviceDrive), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
 	/* add threads, ... */
@@ -161,16 +169,10 @@ void SystemClock_Config(void)
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
   /** Initializes the CPU, AHB and APB busses clocks 
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 72;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -262,37 +264,6 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_HCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hhcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hhcd_USB_OTG_FS.Init.Host_channels = 8;
-  hhcd_USB_OTG_FS.Init.speed = HCD_SPEED_FULL;
-  hhcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hhcd_USB_OTG_FS.Init.phy_itface = HCD_PHY_EMBEDDED;
-  hhcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  if (HAL_HCD_Init(&hhcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -339,23 +310,73 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_ILDATransferTask */
 /**
- * @brief  Function implementing the defaultTask thread.
- * @param  argument: Not used
- * @retval None
- */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
+  * @brief  Function implementing the ildaTransferTas thread.
+  * @param  argument: Not used 
+  * @retval None
+  */
+/* USER CODE END Header_ILDATransferTask */
+void ILDATransferTask(void const * argument)
 {
 
   /* USER CODE BEGIN 5 */
+	uint8_t inbuf[32];
+	uint8_t decbuf[12];
+	uint8_t * p = inbuf;
+	int i = 0;
+
+	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 	/* Infinite loop */
 	for (;;) {
 
-		osDelay(1);
+		HAL_StatusTypeDef ret = HAL_UART_Receive(&huart2, p, 1, READ_TIMEOUT);
+		if(ret != HAL_OK){
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+			continue;
+		}else{
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+		}
+
+
+		if(*p == '\x00'){
+			cobs_decode_result decr = cobs_decode(decbuf, 12, inbuf, i);
+
+			if(decr.status == COBS_DECODE_OK){
+
+				//HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+			}else{
+				//HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+			}
+			p = inbuf;
+			i = 0;
+		}else{
+			p++;i++;
+		}
+
 	}
   /* USER CODE END 5 */ 
+}
+
+/* USER CODE BEGIN Header_ILDADeviceDriver */
+/**
+* @brief Function implementing the ildaDeviceDrive thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ILDADeviceDriver */
+void ILDADeviceDriver(void const * argument)
+{
+  /* USER CODE BEGIN ILDADeviceDriver */
+
+
+  /* Infinite loop */
+  for(;;)
+  {
+
+    osDelay(1);
+  }
+  /* USER CODE END ILDADeviceDriver */
 }
 
 /**

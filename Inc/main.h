@@ -37,7 +37,10 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+struct ilda_point_t{
+	float x,y; // From -1.0 to 1.0
+	uint8_t r,g,b,blank; // rgb: 0-255 | blank is bool (0 or 1)
+};
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
